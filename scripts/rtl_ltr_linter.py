@@ -234,7 +234,7 @@ def lint_file(path, cfg):
 
     # Filter keywords to avoid duplicates with symbols (a symbol can contain a keyword)
     # This is computed once per file instead of per-segment for efficiency
-    filtered_keywords = [kw for kw in keywords_orig]
+    filtered_keywords = keywords_orig.copy()
     for sym in symbols:
         filtered_keywords = [kw for kw in filtered_keywords if kw not in sym]
 
@@ -442,18 +442,20 @@ def get_changed_lines_for_files(filepaths):
                 # Extract filename from "+++ b/path/to/file" or "+++ /path/to/file"
                 if line.startswith('+++ b/'):
                     current_file = os.path.normpath(line[6:])
-                elif line.startswith('+++ '):
+                elif len(line) > 4:  # Ensure there's content after '+++ '
                     current_file = os.path.normpath(line[4:])
                 else:
                     current_file = None
-            elif line.startswith('@@') and current_file and current_file in changed_lines_map:
-                # Example: @@ -10,0 +11,3 @@
-                m = re.search(r'\+(\d+)(?:,(\d+))?', line)
-                if m:
-                    start = int(m.group(1))
-                    count = int(m.group(2) or '1')
-                    for i in range(start, start + count):
-                        changed_lines_map[current_file].add(i)
+            elif line.startswith('@@') and current_file is not None:
+                # Ensure current_file exists in our map before trying to add lines
+                if current_file in changed_lines_map:
+                    # Example: @@ -10,0 +11,3 @@
+                    m = re.search(r'\+(\d+)(?:,(\d+))?', line)
+                    if m:
+                        start = int(m.group(1))
+                        count = int(m.group(2) or '1')
+                        for i in range(start, start + count):
+                            changed_lines_map[current_file].add(i)
     except Exception:
         # Silently ignore errors (e.g., unable to find merge base)
         pass
