@@ -210,7 +210,8 @@ def lint_file(path, cfg):
 
     # Try to read the file content and handle potential errors
     try:
-        lines = open(path, encoding='utf-8').read().splitlines()
+        with open(path, encoding='utf-8') as f:
+            lines = f.read().splitlines()
     except Exception as e:
         return [f"::error file={path},line=1::Cannot read file: {e}"] # Return as a list of issues
 
@@ -230,6 +231,12 @@ def lint_file(path, cfg):
     # the YAML file would be less readable
     RLM = [chr(0x200F)] + cfg['rlm_entities']
     LRM = [chr(0x200E)] + cfg['lrm_entities']
+
+    # Filter keywords to avoid duplicates with symbols (a symbol can contain a keyword)
+    # This is computed once per file instead of per-segment for efficiency
+    filtered_keywords = [kw for kw in keywords_orig]
+    for sym in symbols:
+        filtered_keywords = [kw for kw in filtered_keywords if kw not in sym]
 
     # Determine the directionality context of the file (RTL or LTR) based on the filename
     file_direction_ctx = 'rtl' if is_rtl_filename(path) else 'ltr'
@@ -315,11 +322,6 @@ def lint_file(path, cfg):
             # Split the part into segments based on <span> tags with dir attributes
             segments = split_by_span(raw_text, active_block_direction_ctx)
 
-            # Filter keywords to avoid duplicates with symbols (a symbol can contain a keyword)
-            filtered_keywords = [kw for kw in keywords_orig]
-            for sym in symbols:
-                filtered_keywords = [kw for kw in filtered_keywords if kw not in sym]
-
             # Iterate over each text segment and its directionality context
             for segment_text, segment_direction_ctx in segments:
 
@@ -401,45 +403,57 @@ def lint_file(path, cfg):
     # Return the list of found issues
     return issues
 
-def get_changed_lines_for_file(filepath):
+def get_changed_lines_for_files(filepaths):
     """
-    Returns a set of line numbers (1-based) that were changed in the given file in the current PR.
+    Returns a dictionary mapping file paths to sets of changed line numbers (1-based).
 
     This function uses 'git diff' to compare the current branch with 'origin/main' and extracts
-    the line numbers of added or modified lines. It is used to restrict PR annotations to only
-    those lines that have been changed in the pull request.
+    the line numbers of added or modified lines for all files at once. This is more efficient
+    than calling git diff separately for each file.
 
     Args:
-        filepath (str): The path to the file to check for changes.
+        filepaths (list): List of file paths to check for changes.
 
     Returns:
-        set: A set of 1-based line numbers that were added or modified in the file.
+        dict: A dictionary mapping file paths to sets of 1-based line numbers that were modified.
 
     Note:
         - Requires that the script is run inside a Git repository.
-        - If the merge base cannot be found, returns an empty set and does not print errors.
+        - If the merge base cannot be found, returns an empty dictionary and does not print errors.
     """
     import subprocess
-    changed_lines = set()
+    changed_lines_map = {}
+    
+    # Initialize all files with empty sets
+    for filepath in filepaths:
+        changed_lines_map[filepath] = set()
+    
     try:
-        # Get the diff for the file (unified=0 for no context lines)
+        # Get the diff for all files at once (unified=0 for no context lines)
         diff = subprocess.check_output(
-            ['git', 'diff', '--unified=0', 'origin/main...', '--', filepath],
+            ['git', 'diff', '--unified=0', 'origin/main...'] + list(filepaths),
             encoding='utf-8', errors='ignore'
         )
+        
+        current_file = None
         for line in diff.splitlines():
-            if line.startswith('@@'):
+            # Track which file we're looking at
+            if line.startswith('+++'):
+                # Extract filename from "+++ b/path/to/file"
+                current_file = line[6:] if line.startswith('+++ b/') else None
+            elif line.startswith('@@') and current_file:
                 # Example: @@ -10,0 +11,3 @@
                 m = re.search(r'\+(\d+)(?:,(\d+))?', line)
                 if m:
                     start = int(m.group(1))
                     count = int(m.group(2) or '1')
                     for i in range(start, start + count):
-                        changed_lines.add(i)
+                        changed_lines_map[current_file].add(i)
     except Exception:
         # Silently ignore errors (e.g., unable to find merge base)
         pass
-    return changed_lines
+    
+    return changed_lines_map
 
 
 def main():
@@ -504,9 +518,8 @@ def main():
     changed_files_set = set(os.path.normpath(f) for f in args.changed_files) if args.changed_files else set()
 
     # Build a map: {filepath: set(line_numbers)} for changed files
-    changed_lines_map = {}
-    for f in changed_files_set:
-        changed_lines_map[f] = get_changed_lines_for_file(f)
+    # Use the optimized batch function to get all changed lines at once
+    changed_lines_map = get_changed_lines_for_files(changed_files_set) if changed_files_set else {}
 
     # Flag to check if any issues were found
     any_issues = False
