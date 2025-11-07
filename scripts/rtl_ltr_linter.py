@@ -439,9 +439,14 @@ def get_changed_lines_for_files(filepaths):
         for line in diff.splitlines():
             # Track which file we're looking at
             if line.startswith('+++'):
-                # Extract filename from "+++ b/path/to/file"
-                current_file = line[6:] if line.startswith('+++ b/') else None
-            elif line.startswith('@@') and current_file:
+                # Extract filename from "+++ b/path/to/file" or "+++ /path/to/file"
+                if line.startswith('+++ b/'):
+                    current_file = line[6:]
+                elif line.startswith('+++ '):
+                    current_file = line[4:]
+                else:
+                    current_file = None
+            elif line.startswith('@@') and current_file and current_file in changed_lines_map:
                 # Example: @@ -10,0 +11,3 @@
                 m = re.search(r'\+(\d+)(?:,(\d+))?', line)
                 if m:
