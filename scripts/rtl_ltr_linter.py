@@ -441,9 +441,9 @@ def get_changed_lines_for_files(filepaths):
             if line.startswith('+++'):
                 # Extract filename from "+++ b/path/to/file" or "+++ /path/to/file"
                 if line.startswith('+++ b/'):
-                    current_file = line[6:]
+                    current_file = os.path.normpath(line[6:])
                 elif line.startswith('+++ '):
-                    current_file = line[4:]
+                    current_file = os.path.normpath(line[4:])
                 else:
                     current_file = None
             elif line.startswith('@@') and current_file and current_file in changed_lines_map:
